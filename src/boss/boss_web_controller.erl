@@ -110,7 +110,8 @@ init(Config) ->
 
     {ServerMod, RequestMod, ResponseMod} = case boss_env:get_env(server, misultin) of
         mochiweb -> {mochiweb_http, mochiweb_request_bridge, mochiweb_response_bridge};
-        misultin -> {misultin, misultin_request_bridge, misultin_response_bridge}
+        misultin -> {misultin, misultin_request_bridge, misultin_response_bridge};
+        cowboy   -> {cowboy, cowboy_request_bridge, cowboy_response_bridge}
     end,
     SSLEnable = boss_env:get_env(ssl_enable, false),
     SSLOptions = boss_env:get_env(ssl_options, []),
@@ -123,7 +124,9 @@ init(Config) ->
             case SSLEnable of
                 true -> misultin:start_link([{ssl, SSLOptions} | ServerConfig]);
                 false -> misultin:start_link(ServerConfig)
-            end
+            end;
+        cowboy -> {ok, Sup} = boss_web_cowboy_sup:start_link(Config), 
+				Sup
     end,
     {ok, #state{ http_pid = Pid, is_master_node = (ThisNode =:= MasterNode) }, 0}.
 
@@ -316,6 +319,7 @@ handle_request(Req, RequestMod, ResponseMod) ->
             BaseURL = boss_web:base_url(App),
             DocRoot = boss_files:static_path(App),
             Url = lists:nthtail(length(BaseURL), FullUrl),
+            Request = simple_bridge:make_request(RequestMod, {Req, DocRoot}),
             case Url of
                 "/favicon.ico" = File ->
                     Response = simple_bridge:make_response(ResponseMod, {Req, DocRoot}),
@@ -350,22 +354,15 @@ handle_request(Req, RequestMod, ResponseMod) ->
                     end,
                     Response = simple_bridge:make_response(ResponseMod, {Req, DocRoot}),
                     Response1 = (Response:status_code(StatusCode)):data(Payload),
-                    Headers2 = case SessionID of
+                    Response2 = case SessionID of
                         undefined ->
-                            Headers;
+                            Response1;
                         _ ->
                             SessionExpTime = boss_session:get_session_exp_time(),
-                            CookieOptions = [{path, "/"}, {max_age, SessionExpTime}],
-                            CookieOptions2 = case boss_env:get_env(session_domain, undefined) of
-                                undefined ->
-                                    CookieOptions;
-                                CookieDomain ->
-                                    lists:merge(CookieOptions, [{domain, CookieDomain}])
-                            end,
-                            lists:merge(Headers, [ mochiweb_cookies:cookie(SessionKey, SessionID, CookieOptions2) ])
+                            Response1:cookie(SessionKey, SessionID, "/", SessionExpTime)
                     end,
-                    Response2 = lists:foldl(fun({K, V}, Acc) -> Acc:header(K, V) end, Response1, Headers2),
-                    Response2:build_response()
+                    Response3 = lists:foldl(fun({K, V}, Acc) -> Acc:header(K, V) end, Response2, Headers),
+                    Response3:build_response()
             end
     end.
 
