@@ -308,18 +308,18 @@ run_init_scripts(AppName) ->
 
 handle_request(Req, RequestMod, ResponseMod) ->
     LoadedApplications = boss_web:get_all_applications(),
-    Request = simple_bridge:make_request(RequestMod, Req),
-    FullUrl = Request:path(),
-    case find_application_for_path(Request:header(host), FullUrl, LoadedApplications) of
+    Request0 = simple_bridge:make_request(RequestMod, {Req, "dummy"}),
+    FullUrl = Request0:path(),
+    case find_application_for_path(Request0:header(host), FullUrl, LoadedApplications) of
         undefined ->
             Response = simple_bridge:make_response(ResponseMod, {Req, undefined}),
             Response1 = (Response:status_code(404)):data(["No application configured at this URL"]),
             Response1:build_response();
         App ->
-            BaseURL = boss_web:base_url(App),
             DocRoot = boss_files:static_path(App),
-            Url = lists:nthtail(length(BaseURL), FullUrl),
+            BaseURL = boss_web:base_url(App),
             Request = simple_bridge:make_request(RequestMod, {Req, DocRoot}),
+            Url = lists:nthtail(length(BaseURL), FullUrl),
             case Url of
                 "/favicon.ico" = File ->
                     Response = simple_bridge:make_response(ResponseMod, {Req, DocRoot}),
